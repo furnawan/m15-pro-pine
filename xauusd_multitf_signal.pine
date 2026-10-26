@@ -1,0 +1,8 @@
+//@version=5
+indicator("XAUUSD Multi‑TF Signal (H1 Trend + M1 Entry)", overlay=true)
+
+// ─── Settings ───
+grp_main     = "Signal Settings"
+fastLen      = input.int(12, "EMA Fast (M1)", group=grp_main)
+slowLen      = input.int(34, "EMA Slow (M1)", group=grp_main)
+h1Len        = input.int(60, "H1 Trend Length (bars)", group=gr   

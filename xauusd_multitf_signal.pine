@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator("XAUUSD M15 PRO Signal (H1 Dual EMA + ADX Gate)", overlay=true)
 
 // ─── SETTINGS ───
@@ -29,6 +29,18 @@ wAdx         = input.float(0.10, "ADX Weight", step=0.05, group=grp_scoring)
 wVol         = input.float(0.10, "Volume Weight", step=0.05, group=grp_scoring)
 wRr          = input.float(0.20, "RR Weight", step=0.05, group=grp_scoring)
 
+// ─── CUSTOM ADX FUNCTION (Pine v6 compatible) fn_adx ───
+f_adx(float h, float l, float c, int len) =>
+    float tr = math.max(math.max(h - l, math.abs(h - close[1])), math.abs(l - close[1]))
+    float plusDM = h - h[1] > l[1] - l ? math.max(h - h[1], 0) : 0
+    float minusDM = l[1] - l > h - h[1] ? math.max(l[1] - l, 0) : 0
+    float atrVal = ta.rma(tr, len)
+    float plusDI = 100 * ta.rma(plusDM, len) / atrVal
+    float minusDI = 100 * ta.rma(minusDM, len) / atrVal
+    float sumDI = plusDI + minusDI
+    float dx = 100 * math.abs(plusDI - minusDI) / (sumDI == 0 ? 1 : sumDI)
+    ta.rma(dx, len)
+
 // ─── H1 DATA (Higher Timeframe) ───
 [h1Close, h1High, h1Low, h1Open, h1Vol] = request.security(syminfo.tickerid, "60", [close, high, low, open, volume], lookahead=barmerge.lookahead_on)
 
@@ -39,7 +51,7 @@ h1EmaFPrev = h1EmaF[1]
 h1EmaSPrev = h1EmaS[1]
 
 // H1 ADX
-h1Adx = ta.adx(adxLen)[0]
+h1Adx = f_adx(h1High, h1Low, h1Close, adxLen)
 
 // H1 Slope
 h1Slope = h1Close - h1Close[1]
@@ -61,11 +73,13 @@ emaSlow = ta.ema(close, slowLen)
 
 rsi = ta.rsi(close, rsiLen)
 atrVal = math.max(ta.atr(atrLen), 1.50)
-macdHist = ta.macd(close, 12, 26, 9)[0] - ta.macd(close, 12, 26, 9)[1]
-macdHistPrev = ta.macd(close, 12, 26, 9)[1] - ta.macd(close, 12, 26, 9)[2]
+
+[macdL, macdS, macdH] = ta.macd(close, 12, 26, 9)
+macdHist = macdH
+macdHistPrev = macdH[1]
 
 // M15 ADX
-m15Adx = ta.adx(adxLen)[0]
+m15Adx = f_adx(high, low, close, adxLen)
 
 // ─── REGIME CLASSIFICATION ───
 regime = "UNCERTAIN"
@@ -117,38 +131,38 @@ rrVal = math.abs((tpPrice - close) / (close - slPrice))
 rrOk = rrVal >= minRR
 
 // ─── WEIGHTED SCORE (normalized 0-1) ───
-score = 0.0
+float score = 0.0
 // Regime
 if regime == "STRONG_BULL" or regime == "STRONG_BEAR"
-    score := score + wRegime * 1.0
+    score += wRegime * 1.0
 else if regime == "BULL" or regime == "BEAR"
-    score := score + wRegime * 0.6
+    score += wRegime * 0.6
 else if regime == "HIGH_VOL"
-    score := score + wRegime * 0.4
+    score += wRegime * 0.4
 else
-    score := score + wRegime * 0.1
+    score += wRegime * 0.1
 
 // Pullback
 if emaAligned
-    score := score + wPullback * 0.5
+    score += wPullback * 0.5
 if isPullback
-    score := score + wPullback * 0.5
+    score += wPullback * 0.5
 
 // RSI
 if rsiOk
-    score := score + wRsi * 1.0
+    score += wRsi * 1.0
 
 // ADX
 if adxOk
-    score := score + wAdx * 1.0
+    score += wAdx * 1.0
 
 // Volume
 if volOk
-    score := score + wVol * 1.0
+    score += wVol * 1.0
 
 // RR
 if rrOk
-    score := score + wRr * 1.0
+    score += wRr * 1.0
 
 scoreNorm = math.min(score, 1.0)
 
@@ -172,8 +186,8 @@ longValid = isBull and m15Bull and rsiLongOk and macdLongOk and isPullback and r
 shortValid = isBear and m15Bear and rsiShortOk and macdShortOk and isPullback and rrOk
 
 // ─── FINAL SIGNAL WITH H1 FILTER ───
-var lastSig = "NONE"
-sig = "NONE"
+var string lastSig = "NONE"
+string sig = "NONE"
 
 if longValid and confidence >= dynamicThreshold
     sig := "BUY"
@@ -194,7 +208,7 @@ plot(emaSlow, "EMA Slow", color=color.red, linewidth=1)
 // H1 Trend Background
 bgcolor(h1EmaBull and showHTF ? color.new(color.green, 90) : h1EmaBear and showHTF ? color.new(color.red, 90) : na, title="H1 Trend")
 
-// Signal Markers (fixed - no dynamic text concatenation)
+// Signal Markers
 plotshape(sig == "BUY" and showLabels,  "BUY",  shape.labelup,   location.belowbar, color.green,  size=size.normal, text="🟢 BUY")
 plotshape(sig == "SELL" and showLabels, "SELL", shape.labeldown, location.abovebar, color.red,    size=size.normal, text="🔴 SELL")
 
@@ -203,8 +217,8 @@ plot(showSLTP and sig == "BUY" ? slPrice : showSLTP and sig == "SELL" ? slPrice 
 plot(showSLTP and sig == "BUY" ? tpPrice : showSLTP and sig == "SELL" ? tpPrice : na, "TP", color=color.green, style=plot.style_linebr, linewidth=2)
 
 // Alerts
-alertcondition(sig == "BUY",  title="XAUUSD BUY Signal",  message="🟢 XAUUSD BUY @ {{close}} | SL: " + str.tostring(slPrice, "#.##") + " | TP: " + str.tostring(tpPrice, "#.##"))
-alertcondition(sig == "SELL", title="XAUUSD SELL Signal", message="🔴 XAUUSD SELL @ {{close}} | SL: " + str.tostring(slPrice, "#.##") + " | TP: " + str.tostring(tpPrice, "#.##"))
+alertcondition(sig == "BUY",  title="XAUUSD BUY Signal",  message="🟢 XAUUSD BUY Signal Triggered")
+alertcondition(sig == "SELL", title="XAUUSD SELL Signal", message="🔴 XAUUSD SELL Signal Triggered")
 
 // ─── DASHBOARD TABLE ───
 var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 80), border_width=1)
